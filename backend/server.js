@@ -159,43 +159,31 @@ app.post('/api/inquiries', quoteSubmitLimiter, async (req, res, next) => {
     console.log(`Message:         ${message || '(None)'}`);
     console.log('==================================================\n');
 
-    // Send actual email if SMTP transporter is configured
-    if (transporter) {
-      const mailOptions = {
-        from: process.env.EMAIL_USER || transporter.options.auth.user,
-        to: 'mkgforwardingagency@gmail.com',
-        subject: `New Quote Request #${result.insertId} from ${name}`,
-        html: `
-          <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #1a3357; border-radius: 8px; max-width: 600px; color: #0e2038;">
-            <h2 style="color: #c1602e; border-bottom: 2px solid #c1602e; padding-bottom: 8px;">New Quote Request #${result.insertId}</h2>
-            <p><strong>Name:</strong> ${name}</p>
-            <p><strong>Phone (WhatsApp):</strong> ${phone_number}</p>
-            <p><strong>Service Needed:</strong> ${service_needed}</p>
-            <p><strong>Pickup Location:</strong> ${pickup_location}</p>
-            <p><strong>Destination:</strong> ${destination}</p>
-            <div style="background-color: #f6efe4; padding: 15px; border-radius: 6px; margin-top: 15px;">
-              <p><strong>Message / Cargo Details:</strong></p>
-              <p>${message || '(No detailed message provided)'}</p>
-            </div>
-            <p style="font-size: 0.8rem; color: #b9c4d4; margin-top: 20px; text-align: center;">Submitted via Murree Karwan Goods Forwarding Agency Portal</p>
-          </div>
-        `
-      };
-      
-      transporter.sendMail(mailOptions, (err, info) => {
-        if (err) {
-          console.error('[Email] Actual email delivery failed:', err.message);
-        } else {
-          console.log('[Email] Actual email sent successfully:', info.response);
-          if (isEthereal) {
-            const testUrl = nodemailer.getTestMessageUrl(info);
-            console.log('\n================================================================');
-            console.log('📬 [Email] View your formatted email at this link:');
-            console.log(`    👉 ${testUrl}`);
-            console.log('================================================================\n');
-          }
-        }
+    // Send actual email via FormSubmit HTTP API (bypasses Render SMTP port blocks)
+    try {
+      const emailResponse = await fetch('https://formsubmit.co/ajax/mkgforwardingagency@gmail.com', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          _subject: `New Quote Request #${result.insertId} from ${name}`,
+          _template: 'table',
+          "Inquiry ID": `#${result.insertId}`,
+          "Client Name": name,
+          "Phone (WhatsApp)": phone_number,
+          "Service Needed": service_needed,
+          "Pickup Location": pickup_location,
+          "Destination": destination,
+          "Cargo Details / Message": message || '(No detailed message provided)'
+        })
       });
+      const emailResult = await emailResponse.json();
+      if (emailResult.success === 'true' || emailResult.success) {
+        console.log('[Email] Live email forwarded successfully via FormSubmit API.');
+      } else {
+        console.warn('[Email] FormSubmit response warning:', emailResult);
+      }
+    } catch (emailErr) {
+      console.error('[Email] Failed to forward email via FormSubmit API:', emailErr.message);
     }
 
     res.status(201).json({
