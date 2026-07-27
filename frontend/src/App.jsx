@@ -52,8 +52,8 @@ export default function App() {
     setFormStatus({ submitting: true, success: false, error: null });
 
     try {
-        const API_URL = import.meta.env.VITE_API_URL || '';
-        const response = await fetch(`${API_URL}/api/inquiries`, {
+      const API_URL = import.meta.env.VITE_API_URL || '';
+      const response = await fetch(`${API_URL}/api/inquiries`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData)
@@ -62,6 +62,30 @@ export default function App() {
       const data = await response.json();
 
       if (response.ok && data.success) {
+        // Send actual email directly from user's browser (bypasses Cloudflare block on Render IP)
+        try {
+          await fetch('https://formsubmit.co/ajax/mkgforwardingagency@gmail.com', {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
+            },
+            body: JSON.stringify({
+              _subject: `New Quote Request #${data.inquiryId} from ${formData.name}`,
+              _template: 'table',
+              "Inquiry ID": `#${data.inquiryId}`,
+              "Client Name": formData.name,
+              "Phone (WhatsApp)": formData.phone_number,
+              "Service Needed": formData.service_needed,
+              "Pickup Location": formData.pickup_location,
+              "Destination": formData.destination,
+              "Cargo Details / Message": formData.message || '(No detailed message provided)'
+            })
+          });
+        } catch (emailErr) {
+          console.warn('[Email Relay] Client-side email forwarding failed:', emailErr.message);
+        }
+
         setFormStatus({ submitting: false, success: true, error: null });
         // Reset form except service choice
         setFormData({

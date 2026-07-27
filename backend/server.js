@@ -159,32 +159,7 @@ app.post('/api/inquiries', quoteSubmitLimiter, async (req, res, next) => {
     console.log(`Message:         ${message || '(None)'}`);
     console.log('==================================================\n');
 
-    // Send actual email via FormSubmit HTTP API (bypasses Render SMTP port blocks)
-    try {
-      const emailResponse = await fetch('https://formsubmit.co/ajax/mkgforwardingagency@gmail.com', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          _subject: `New Quote Request #${result.insertId} from ${name}`,
-          _template: 'table',
-          "Inquiry ID": `#${result.insertId}`,
-          "Client Name": name,
-          "Phone (WhatsApp)": phone_number,
-          "Service Needed": service_needed,
-          "Pickup Location": pickup_location,
-          "Destination": destination,
-          "Cargo Details / Message": message || '(No detailed message provided)'
-        })
-      });
-      const emailResult = await emailResponse.json();
-      if (emailResult.success === 'true' || emailResult.success) {
-        console.log('[Email] Live email forwarded successfully via FormSubmit API.');
-      } else {
-        console.warn('[Email] FormSubmit response warning:', emailResult);
-      }
-    } catch (emailErr) {
-      console.error('[Email] Failed to forward email via FormSubmit API:', emailErr.message);
-    }
+
 
     res.status(201).json({
       success: true,
