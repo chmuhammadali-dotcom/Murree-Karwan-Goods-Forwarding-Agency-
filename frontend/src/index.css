@@ -762,27 +762,71 @@ header {
   position: fixed;
   bottom: 2rem;
   right: 2rem;
-  width: 60px;
-  height: 60px;
+  height: 56px;
+  width: 56px; /* Start as circle */
   background-color: #25D366;
   color: white;
-  border-radius: 50%;
+  border-radius: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 2.25rem;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 0 10px rgba(37, 211, 102, 0.3);
   z-index: 999;
   cursor: pointer;
-  transition: var(--transition-smooth);
+  text-decoration: none;
+  overflow: hidden;
+  transition: width 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), background-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
   animation: whatsappBounce 4s infinite ease-in-out;
+  padding: 0;
 }
 
-.floating-whatsapp:hover {
-  background-color: #128C7E;
-  transform: scale(1.1) rotate(15deg);
-  box-shadow: 0 6px 25px rgba(37, 211, 102, 0.5);
+.floating-whatsapp svg {
+  flex-shrink: 0;
+  transition: transform 0.3s ease;
 }
+
+.floating-whatsapp-text {
+  max-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: 'Inter', sans-serif;
+  font-weight: 600;
+  font-size: 0.95rem;
+  opacity: 0;
+  transition: max-width 0.3s ease, opacity 0.2s ease, margin-left 0.3s ease;
+  margin-left: 0;
+}
+
+/* Expand to pill shape on hover (Desktop) */
+@media (min-width: 769px) {
+  .floating-whatsapp:hover {
+    width: 190px; /* Expands to fit text */
+    background-color: #128C7E;
+    box-shadow: 0 8px 30px rgba(37, 211, 102, 0.4), 0 0 15px rgba(37, 211, 102, 0.6);
+    transform: translateY(-5px);
+    padding: 0 16px;
+    justify-content: flex-start;
+  }
+
+  .floating-whatsapp:hover .floating-whatsapp-text {
+    max-width: 140px;
+    opacity: 1;
+    margin-left: 8px;
+  }
+}
+
+/* On mobile, keep it circular or expand slightly on touch */
+@media (max-width: 768px) {
+  .floating-whatsapp {
+    bottom: 1.5rem;
+    right: 1.5rem;
+  }
+  .floating-whatsapp:active {
+    transform: scale(0.9);
+    background-color: #128C7E;
+  }
+}
+
 
 /* Footer Section */
 footer {
