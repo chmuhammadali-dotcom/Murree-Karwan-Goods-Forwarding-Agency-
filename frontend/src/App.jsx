@@ -87,6 +87,20 @@ export default function App() {
         }
 
         setFormStatus({ submitting: false, success: true, error: null });
+        
+        // Construct WhatsApp message with form details for direct chat redirection
+        const waText = `Hi Murree Karwan! I just submitted a Quote Request #${data.inquiryId} on your website. Here are my details:\n\n` +
+          `• *Name*: ${formData.name}\n` +
+          `• *Phone*: ${formData.phone_number}\n` +
+          `• *Service*: ${formData.service_needed}\n` +
+          `• *Pickup*: ${formData.pickup_location}\n` +
+          `• *Destination*: ${formData.destination}\n` +
+          (formData.message ? `• *Message*: ${formData.message}\n` : '') +
+          `\nPlease quote your rates for this shipment.`;
+        
+        const waLink = `https://wa.me/${WHATSAPP_PHONE}?text=${encodeURIComponent(waText)}`;
+        window.open(waLink, '_blank');
+
         // Reset form except service choice
         setFormData({
           name: '',
