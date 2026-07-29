@@ -99,7 +99,7 @@ export default function App() {
           `\nPlease quote your rates for this shipment.`;
         
         const waLink = `https://wa.me/${WHATSAPP_PHONE}?text=${encodeURIComponent(waText)}`;
-        window.open(waLink, '_blank');
+        window.location.href = waLink;
 
         // Reset form except service choice
         setFormData({
