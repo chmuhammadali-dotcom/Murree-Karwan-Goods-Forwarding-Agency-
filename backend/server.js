@@ -466,6 +466,13 @@ app.post('/api/auth/verify-otp', async (req, res, next) => {
     } else if (role === 'driver') {
       const [rows] = await pool.query('SELECT * FROM drivers WHERE phone_number = ?', [phone_number]);
       userProfile = rows[0];
+    } else if (role === 'admin') {
+      userProfile = {
+        id: 999,
+        name: 'Murree Karwan Owner',
+        phone_number: phone_number,
+        role: 'admin'
+      };
     }
 
     // Clear OTP from memory
