@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
+const jwt = require('jsonwebtoken');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { pool, testConnection } = require('./db');
 
 require('dotenv').config();
@@ -186,6 +188,357 @@ app.get('/api/inquiries', async (req, res, next) => {
     next(error);
   }
 });
+
+// --- MOBILE APP AUTHENTICATION ENDPOINTS ---
+const activeOtps = new Map(); // Simple memory map to store: phone_number -> { otp, expires }
+const JWT_SECRET = process.env.JWT_SECRET || 'karwan_secret_123';
+
+// POST /api/auth/register - Register Shipper
+app.post('/api/auth/register', async (req, res, next) => {
+  const { name, phone_number, account_type, ntn_number } = req.body;
+
+  if (!name || !phone_number) {
+    return res.status(400).json({ success: false, error: 'Name and Phone Number are required.' });
+  }
+
+  try {
+    // Check if user already exists
+    const [existing] = await pool.query('SELECT id FROM users WHERE phone_number = ?', [phone_number]);
+    if (existing.length > 0) {
+      return res.status(400).json({ success: false, error: 'Phone number already registered.' });
+    }
+
+    const [result] = await pool.query(
+      'INSERT INTO users (name, phone_number, account_type, ntn_number) VALUES (?, ?, ?, ?)',
+      [name, phone_number, account_type || 'individual', ntn_number || null]
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'Shipper registered successfully!',
+      userId: result.insertId
+    });
+  } catch (error) {
+    console.error('[Auth API] Error registering shipper:', error.message);
+    next(error);
+  }
+});
+
+// POST /api/auth/register-driver - Register Driver
+app.post('/api/auth/register-driver', async (req, res, next) => {
+  const { name, phone_number, cnic, license_number } = req.body;
+
+  if (!name || !phone_number || !cnic || !license_number) {
+    return res.status(400).json({ success: false, error: 'All fields (Name, Phone, CNIC, License) are required.' });
+  }
+
+  try {
+    // Check if driver already exists
+    const [existing] = await pool.query('SELECT id FROM drivers WHERE phone_number = ? OR cnic = ? OR license_number = ?', [phone_number, cnic, license_number]);
+    if (existing.length > 0) {
+      return res.status(400).json({ success: false, error: 'Driver credentials (Phone, CNIC, or License) already exist.' });
+    }
+
+    const [result] = await pool.query(
+      'INSERT INTO drivers (name, phone_number, cnic, license_number) VALUES (?, ?, ?, ?)',
+      [name, phone_number, cnic, license_number]
+    );
+
+    res.status(201).json({
+      success: true,
+      message: 'Driver registered successfully!',
+      driverId: result.insertId
+    });
+  } catch (error) {
+    console.error('[Auth API] Error registering driver:', error.message);
+    next(error);
+  }
+});
+
+const https = require('https');
+const querystring = require('querystring');
+
+// Helper to send real SMS via Twilio API
+function sendTwilioSms(to, body) {
+  const sid = process.env.TWILIO_ACCOUNT_SID;
+  const token = process.env.TWILIO_AUTH_TOKEN;
+  const from = process.env.TWILIO_FROM_NUMBER;
+
+  if (!sid || !token || !from) {
+    return Promise.reject(new Error('Twilio credentials missing in environment variables.'));
+  }
+
+  const postData = querystring.stringify({ From: from, To: to, Body: body });
+  const auth = 'Basic ' + Buffer.from(sid + ':' + token).toString('base64');
+
+  const options = {
+    hostname: 'api.twilio.com',
+    port: 443,
+    path: `/2010-04-01/Accounts/${sid}/Messages.json`,
+    method: 'POST',
+    headers: {
+      'Authorization': auth,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Content-Length': postData.length
+    }
+  };
+
+  return new Promise((resolve, reject) => {
+    const req = https.request(options, (res) => {
+      let responseBody = '';
+      res.on('data', (chunk) => responseBody += chunk);
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          resolve(JSON.parse(responseBody));
+        } else {
+          reject(new Error(`Twilio returned status ${res.statusCode}: ${responseBody}`));
+        }
+      });
+    });
+
+    req.on('error', (err) => reject(err));
+    req.write(postData);
+    req.end();
+  });
+}
+
+// POST /api/auth/login - Request SMS OTP
+app.post('/api/auth/login', async (req, res, next) => {
+  const { phone_number, role } = req.body; // role: 'shipper' or 'driver' or 'admin'
+
+  if (!phone_number || !role) {
+    return res.status(400).json({ success: false, error: 'Phone Number and Role are required.' });
+  }
+
+  try {
+    let userExists = false;
+    
+    if (role === 'shipper') {
+      const [rows] = await pool.query('SELECT id FROM users WHERE phone_number = ?', [phone_number]);
+      userExists = rows.length > 0;
+    } else if (role === 'driver') {
+      const [rows] = await pool.query('SELECT id FROM drivers WHERE phone_number = ?', [phone_number]);
+      userExists = rows.length > 0;
+    } else if (role === 'admin') {
+      // Admin bypass checks: allows official phone to access dashboard
+      userExists = (phone_number === '03330103759' || phone_number === 'admin');
+    }
+
+    if (!userExists) {
+      return res.status(404).json({ success: false, error: 'User profile not found. Please register first.' });
+    }
+
+    // Generate random 6-digit OTP code
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 5 * 60 * 1000; // Expires in 5 minutes
+
+    activeOtps.set(phone_number, { otp: otpCode, expires: expiresAt });
+
+    const smsBody = `Your Murree Karwan verification code is: ${otpCode}. Expire in 5 mins.`;
+
+    console.log('==================================================');
+    console.log(`📱 [SMS OTP DISPATCH] to ${phone_number}:`);
+    console.log(`Message: "${smsBody}"`);
+    console.log('==================================================');
+
+    // Attempt to dispatch real SMS via Twilio
+    try {
+      await sendTwilioSms(phone_number, smsBody);
+      console.log(`✓ Real SMS OTP sent successfully to ${phone_number}`);
+      
+      res.json({
+        success: true,
+        message: 'Verification OTP sent via SMS!',
+        realSmsSent: true
+      });
+    } catch (smsError) {
+      console.warn(`[SMS API Warning] Failed to send real SMS: ${smsError.message}`);
+      console.info(`[SMS API Fallback] Displaying code in API response for developer testing.`);
+      
+      res.json({
+        success: true,
+        message: 'Verification OTP sent (Simulated Fallback Mode)!',
+        realSmsSent: false,
+        testOtp: otpCode // Returned for easy visual simulation if API keys are missing
+      });
+    }
+  } catch (error) {
+    console.error('[Auth API] Login request failed:', error.message);
+    next(error);
+  }
+});
+
+// POST /api/auth/verify-otp - Verify code and return JWT
+app.post('/api/auth/verify-otp', async (req, res, next) => {
+  const { phone_number, otp, role } = req.body;
+
+  if (!phone_number || !otp || !role) {
+    return res.status(400).json({ success: false, error: 'Phone, OTP, and Role are required.' });
+  }
+
+  try {
+    const record = activeOtps.get(phone_number);
+    if (!record) {
+      return res.status(400).json({ success: false, error: 'No active OTP request found.' });
+    }
+
+    if (Date.now() > record.expires) {
+      activeOtps.delete(phone_number);
+      return res.status(400).json({ success: false, error: 'OTP has expired. Please request a new one.' });
+    }
+
+    if (record.otp !== otp) {
+      return res.status(400).json({ success: false, error: 'Incorrect OTP code.' });
+    }
+
+    // OTP Verified. Fetch profile details
+    let userProfile = null;
+    if (role === 'shipper') {
+      const [rows] = await pool.query('SELECT * FROM users WHERE phone_number = ?', [phone_number]);
+      userProfile = rows[0];
+    } else if (role === 'driver') {
+      const [rows] = await pool.query('SELECT * FROM drivers WHERE phone_number = ?', [phone_number]);
+      userProfile = rows[0];
+    }
+
+    // Clear OTP from memory
+    activeOtps.delete(phone_number);
+
+    // Generate JWT Token
+    const payload = {
+      id: userProfile.id,
+      name: userProfile.name,
+      phone_number: userProfile.phone_number,
+      role: role,
+      account_type: userProfile.account_type || null
+    };
+
+    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
+
+    res.json({
+      success: true,
+      message: 'Authentication successful!',
+      token,
+      profile: payload
+    });
+  } catch (error) {
+    console.error('[Auth API] Verification failed:', error.message);
+    next(error);
+  }
+});
+
+// POST /api/voice-booking - Process Roman Urdu speech transcript using Gemini LLM
+app.post('/api/voice-booking', async (req, res, next) => {
+  const { transcript } = req.body;
+
+  if (!transcript) {
+    return res.status(400).json({ success: false, error: 'Transcript text is required.' });
+  }
+
+  try {
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    if (!GEMINI_API_KEY) {
+      console.warn('[Gemini LLM] Warning: GEMINI_API_KEY is not defined in .env. Returning simulated extraction.');
+      
+      const hasMazda = /mazda/i.test(transcript);
+      const hasShahzore = /shahzore/i.test(transcript);
+      const vehicle = hasMazda ? 'Mazda' : (hasShahzore ? 'Shahzore' : 'Suzuki');
+      
+      return res.json({
+        success: true,
+        source: 'fallback_regex',
+        data: {
+          pickup: 'Islamabad I-10 Adda',
+          destination: 'Lahore Shahdara',
+          vehicle: vehicle,
+          weight_tons: vehicle === 'Mazda' ? 8 : (vehicle === 'Shahzore' ? 3.5 : 1.2),
+          date: new Date().toISOString().split('T')[0]
+        }
+      });
+    }
+
+    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+
+    const prompt = `You are the Karwan Logistics AI booking assistant. Your task is to extract structured JSON data from a transcript of a shipper ordering a truck in Roman Urdu or Urdu.
+
+JSON Structure to output:
+{
+  "pickup": "string or null",
+  "destination": "string or null",
+  "vehicle": "Shahzore" | "Mazda" | "Suzuki" | "Unknown",
+  "weight_tons": float | null,
+  "date": "YYYY-MM-DD" | null
+}
+
+IMPORTANT: Return ONLY the raw JSON block without markdown formatting or code block markers.
+
+Transcript: "${transcript}"
+Output:`;
+
+    const result = await model.generateContent(prompt);
+    const responseText = result.response.text().trim();
+    
+    let parsedData;
+    try {
+      const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+      parsedData = JSON.parse(cleanJson);
+    } catch (e) {
+      console.error('[Gemini LLM] Failed to parse model output as JSON:', responseText);
+      parsedData = {
+        pickup: null,
+        destination: null,
+        vehicle: 'Unknown',
+        weight_tons: null,
+        date: null,
+        raw_output: responseText
+      };
+    }
+
+    res.json({
+      success: true,
+      source: 'gemini_flash',
+      data: parsedData
+    });
+  } catch (error) {
+    console.error('[Gemini LLM API] Parsing request failed:', error.message);
+    next(error);
+  }
+});
+
+
+// POST /api/gps-logs - Upload live background GPS tracking ping from driver mobile app
+app.post('/api/gps-logs', async (req, res, next) => {
+  const { booking_id, lat, lon } = req.body;
+
+  if (!booking_id || lat === undefined || lon === undefined) {
+    return res.status(400).json({ success: false, error: 'Booking ID, Latitude (lat), and Longitude (lon) are required.' });
+  }
+
+  try {
+    const [booking] = await pool.query('SELECT id, status FROM bookings WHERE id = ?', [booking_id]);
+    if (booking.length === 0) {
+      return res.status(404).json({ success: false, error: 'Booking record not found.' });
+    }
+
+    const [result] = await pool.query(
+      'INSERT INTO gps_logs (booking_id, lat, lon) VALUES (?, ?, ?)',
+      [booking_id, lat, lon]
+    );
+
+    console.log(`📡 [GPS LOG] Ping recorded for Booking #${booking_id}: Coordinates (${lat}, ${lon})`);
+
+    res.status(201).json({
+      success: true,
+      message: 'Driver location ping recorded successfully!',
+      logId: result.insertId
+    });
+  } catch (error) {
+    console.error('[Telemetry API] Error recording GPS log:', error.message);
+    next(error);
+  }
+});
+
 
 // Global Error Handler
 app.use((err, req, res, next) => {

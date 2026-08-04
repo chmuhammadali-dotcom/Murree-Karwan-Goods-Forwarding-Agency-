@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import BilityGenerator from './components/BilityGenerator.jsx';
 
 // Configuration constants
 const WHATSAPP_PHONE = '923330103759'; // Official WhatsApp number
@@ -184,6 +185,15 @@ export default function App() {
                 onClick={(e) => { e.preventDefault(); navigateTo('gallery'); }}
               >
                 Gallery
+              </a>
+            </li>
+            <li>
+              <a 
+                href="#bility" 
+                className={currentPage === 'bility' ? 'active' : ''} 
+                onClick={(e) => { e.preventDefault(); navigateTo('bility'); }}
+              >
+                Bility Desk
               </a>
             </li>
             <li>
@@ -847,6 +857,10 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {currentPage === 'bility' && (
+          <BilityGenerator />
+        )}
       </main>
 
       {/* Footer */}
@@ -876,6 +890,7 @@ export default function App() {
               <li><a href="#about" onClick={(e) => { e.preventDefault(); navigateTo('about'); }}>About Us</a></li>
               <li><a href="#services" onClick={(e) => { e.preventDefault(); navigateTo('services'); }}>Services</a></li>
               <li><a href="#gallery" onClick={(e) => { e.preventDefault(); navigateTo('gallery'); }}>Gallery</a></li>
+              <li><a href="#bility" onClick={(e) => { e.preventDefault(); navigateTo('bility'); }}>Bility Desk</a></li>
             </ul>
           </div>
 
