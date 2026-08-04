@@ -10,3 +10,11 @@ services:
     env_file:
       - ./backend/.env
     restart: always
+
+  ml_service:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.ml
+    ports:
+      - "5001:5001"
+    restart: always
